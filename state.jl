@@ -193,6 +193,9 @@ function show_elements(io::IO, x::StateElements)
   for field in fieldnames(x)
     name = convert(String, field)
     value = getfield(x, field)
+    if field in [:i, :Ω, :ω, :ν, :ω_true, :λ_true, :M, :φ_fpa, :β, :α, :δ, :φ_gc, :λ]
+      value = rad2deg(value)
+    end
     println(io, "$name: $value")
   end
 end
@@ -447,7 +450,7 @@ end
 
 propagate_kepler(state, epoch::Dates.TimeType) = propagate_kepler(state, Dates.value(epoch) / 1000.0)
 
-function propagate_kepler(state, epoch::Real)
+function propagate_kepler(state, epoch::Real; ϵ = 1e-12, check_tol = 1e-12, max_iter = 20)
   Δt = (epoch - state.t)
 
   if abs(Δt) ≈ 0.
@@ -488,15 +491,20 @@ function propagate_kepler(state, epoch::Real)
   local c_2
   local c_3
 
-  for i in 1:10
+  for i in 1:max_iter
     ψ = Χ^2 * α
     c_2, c_3 = ψ_to_c2c3(ψ)
     Χ_c_3 = Χ * (1 - ψ * c_3)
     r = Χ^2 * c_2 + r_dot_v / sqrt_μ * Χ_c_3 + r_mag * (1 - ψ * c_2)
     ΔΧ = (sqrt_μ * Δt - Χ^3 * c_3 - r_dot_v / sqrt_μ * Χ^2 * c_2 - r_mag * Χ_c_3) / r
     Χ += ΔΧ
-    if abs(ΔΧ) < 1e-12
+
+    if abs(ΔΧ) < ϵ
       break
+    end
+
+    if iter === max_iter
+      error("Did not converge after $iter iterations")
     end
   end
 
@@ -508,7 +516,7 @@ function propagate_kepler(state, epoch::Real)
 
   check = f * ġ - ḟ * g - 1
 
-  if !isapprox(check, 0; atol=1e-12)
+  if !isapprox(check, 0; atol = check_tol)
     warn("check: ", check)
   end
 

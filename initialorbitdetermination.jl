@@ -194,11 +194,11 @@ function double_r(obs; t_m = +1., ϵ = 1e-6, max_iter = 100, μ = 398600.4418)
 
   c = 2Ls .⋅ rs
 
-  function calc_F(r_mag)
+  calc_F = function (r_mag)
     ρ = (-c + sqrt.(c.^2 - 4(norm.(rs).^2 - (r_mag).^2))) / 2
     r = ρ .* Ls + rs
 
-    W = cross(r[1], r[2]) / (norm(r[1]) * norm(r[1]))
+    W = cross(r[1], r[2]) / (norm(r[1]) * norm(r[2]))
 
     ρ[3] = -(rs[3] ⋅ W) / (Ls[3] ⋅ W)
 
@@ -400,65 +400,100 @@ function lambert_minumum_energy(r0, r1; μ = 398600.4418)
 end
 
 function lambert_gauss_W(x_1)
-  g = 2 * asin(sqrt(x_1))
-  return (2g - sin(2g)) / sin(g)^3
+    g = 2 * asin(sqrt(x_1))
+    return (2g - sin(2g)) / sin(g)^3
 end
+
+using ForwardDiff
 
 function lambert_gauss(r0, r1, Δt; t_m = +1., elliptic = true, ϵ = 1e-9, max_iter = 100, μ = 398600.4418)
 
-  cos_Δν = (r0 ⋅ r1) / (norm(r0) * norm(r1))
-  sin_Δν = t_m * sqrt(1 - cos_Δν^2)
-  Δν = atan2(sin_Δν, cos_Δν)
+    cos_Δν = (r0 ⋅ r1) / (norm(r0) * norm(r1))
+    sin_Δν = t_m * sqrt(1 - cos_Δν^2)
+    Δν = atan2(sin_Δν, cos_Δν)
 
-  l = (norm(r0) + norm(r1)) / (4 * sqrt(norm(r0) * norm(r1)) * cos(Δν / 2)) - 0.5
-  m = μ * Δt^2 / (2 * sqrt(norm(r0) * norm(r1)) * cos(Δν / 2))^3
+    l = (norm(r0) + norm(r1)) / (4 * sqrt(norm(r0) * norm(r1)) * cos(Δν / 2)) - 0.5
+    m = μ * Δt^2 / (2 * sqrt(norm(r0) * norm(r1)) * cos(Δν / 2))^3
 
-  # f = (x) -> 1 - x + m / x^2 * W(m / x^2 - l)
+    println("l: $l, m: $m")
 
-  local x_1, x_2
-  y = 1.
-  for iter in 1:max_iter
+    # f = (x) -> 1 - x + m / x^2 * W(m / x^2 - l)
 
-    x_1 = m / y^2 - l
-    # x_2 = 4/3 * (1 + 6/5 * x_1 + 48/35 * x_1^2 + 32/21 * x_1^3 + 128/77 * x_1^4 + 256/143 * x_1^5 + 4096/2145 * x_1^6)
+    function y_gen(y)
+        x_1 = m / y^2 - l
+        g = 2 * asin(sqrt(x_1))
+        x_2 = (2g - sin(2g)) / sin(g)^3
 
-    # g = 2 * asin(sqrt(x_1))
-    # x_2 = (2g - sin(2g)) / sin(g)^3
-
-    x_2 = lambert_gauss_W(x_1)
-
-    y_new = 1 + x_2 * (l + x_1)
-
-    dy = y - y_new
-    y = y_new
-
-    if abs(dy) < ϵ
-      break
+        return 1 + x_2 * (l + x_1)
     end
 
-    if iter === max_iter
-      error("Did not converge after $iter iterations")
+    function fn(y)
+        return y - y_gen(y)
     end
-  end
 
-  if elliptic
-    cos_ΔE_2 = 1 - 2x_1
-    p = (norm(r0) * norm(r1) * (1 - cos_Δν)) / (norm(r0) + norm(r1) - 2 * sqrt(norm(r0) * norm(r1)) * cos(Δν / 2) * cos_ΔE_2)
-  else
-    cosh_ΔH_2 = 1 - 2x_1
-    p = (norm(r0) * norm(r1) * (1 - cos_Δν)) / (norm(r0) + norm(r1) - 2 * sqrt(norm(r0) * norm(r1)) * cos(Δν / 2) * cosh_ΔH_2)
-  end
+    begin
+        yn = 1.
+        fi = 1.
+        for i in 1:100
+            fio = fi
+            fi = fn(yn)
+            Δfi = fi - fio
 
-  f = 1 - norm(r1) / p * (1 - cos_Δν)
-  g = norm(r0) * norm(r1) * sin_Δν / sqrt(μ * p)
+            dfi = ForwardDiff.derivative(fn, yn)
+            Δyn = - fi / dfi
+            yn = yn + Δyn
 
-  ḟ = sqrt(1 / p) * tan(Δν / 2) * ((1 - cos_Δν) / p - 1/norm(r1) - 1/norm(r0))
-  ġ = 1 - norm(r0) / p * (1 - cos_Δν)
+            if abs(Δyn) < 1e-15
+                println("Iterations: $i y: $yn Δy: $Δyn Δf: $Δfi")
+                break
+            end
+        end
+    end
 
-  v0 = (r1 - f * r0) / g
-  v1 = (ġ * r1 - r0) / g
+    local x_1, x_2
+    y = 1.
+    for iter in 1:max_iter
 
-  return v0, v1
+        x_1 = m / y^2 - l
+        # x_2 = 4/3 * (1 + 6/5 * x_1 + 48/35 * x_1^2 + 32/21 * x_1^3 + 128/77 * x_1^4 + 256/143 * x_1^5 + 4096/2145 * x_1^6)
+
+        # g = 2 * asin(sqrt(x_1))
+        # x_2 = (2g - sin(2g)) / sin(g)^3
+
+        x_2 = lambert_gauss_W(x_1)
+
+        y_new = 1 + x_2 * (l + x_1)
+
+        dy = y - y_new
+        y = y_new
+
+        if abs(dy) < ϵ
+            break
+        end
+
+        if iter === max_iter
+            error("Did not converge after $iter iterations")
+        end
+    end
+
+    if elliptic
+        cos_ΔE_2 = 1 - 2x_1
+        p = (norm(r0) * norm(r1) * (1 - cos_Δν)) / (norm(r0) + norm(r1) - 2 * sqrt(norm(r0) * norm(r1)) * cos(Δν / 2) * cos_ΔE_2)
+    else
+        cosh_ΔH_2 = 1 - 2x_1
+        p = (norm(r0) * norm(r1) * (1 - cos_Δν)) / (norm(r0) + norm(r1) - 2 * sqrt(norm(r0) * norm(r1)) * cos(Δν / 2) * cosh_ΔH_2)
+    end
+
+    f = 1 - norm(r1) / p * (1 - cos_Δν)
+    g = norm(r0) * norm(r1) * sin_Δν / sqrt(μ * p)
+
+    ḟ = sqrt(1 / p) * tan(Δν / 2) * ((1 - cos_Δν) / p - 1/norm(r1) - 1/norm(r0))
+    ġ = 1 - norm(r0) / p * (1 - cos_Δν)
+
+    v0 = (r1 - f * r0) / g
+    v1 = (ġ * r1 - r0) / g
+
+    return v0, v1
 end
 
 function lambert_univeral(r0, r1, Δt; t_m = +1., ψ_n = 0., ψ_up = 4π^2, ψ_low = -4π^2, ϵ = 1e-6, max_iter = 500, μ = 398600.4418)

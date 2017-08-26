@@ -40,7 +40,7 @@ obs_all = [
 
 
 # Laplace method
-state = laplace_method(obs_all[[3,5,6]])
+state = laplace_method(obs_all[[3,5,7]])
 println(state)
 elements = stateToElements(state)
 println(elements)
