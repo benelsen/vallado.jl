@@ -8,6 +8,7 @@ include("lagrange.jl")
 
 using PolynomialRoots
 using StaticArrays
+using ForwardDiff
 
 function site_track(utc_dt, gd::GeodeticCoordinate, ρ, β, e, ρ̇, β̇, ė; eop = EOP(0, 0, 0, 0, 0, 0, 0))
   x_SEZ, v_SEZ = azel_to_SEZ(ρ, β, e, ρ̇, β̇, ė)
@@ -399,12 +400,29 @@ function lambert_minumum_energy(r0, r1; μ = 398600.4418)
   return v_0, t_min_amin_1, t_min_amin_2, t_min_abs, a_min, p_min, e_min
 end
 
-function lambert_gauss_W(x_1)
-    g = 2 * asin(sqrt(x_1))
-    return (2g - sin(2g)) / sin(g)^3
-end
+function newton_raphson_method(fn, y0 = 1.; max_iter = 100, ϵ = 1e-15)
+    yn = y0
+    fi = 1.
+    for i in 1:max_iter
+        fio = fi
+        fi = fn(yn)
+        Δfi = fi - fio
 
-using ForwardDiff
+        dfi = ForwardDiff.derivative(fn, yn)
+        Δyn = - fi ./ dfi
+        yn = yn + Δyn
+
+        if abs(Δyn) < ϵ
+            # println("Iterations: $i y: $yn Δy: $Δyn Δf: $Δfi f: $fi df: $dfi")
+            # break
+            return yn
+        end
+
+        if i === max_iter
+            error("Failed to converge after $i iterations, y: $yn Δy: $Δyn Δf: $Δfi f: $fi df: $dfi")
+        end
+    end
+end
 
 function lambert_gauss(r0, r1, Δt; t_m = +1., elliptic = true, ϵ = 1e-9, max_iter = 100, μ = 398600.4418)
 
@@ -417,64 +435,15 @@ function lambert_gauss(r0, r1, Δt; t_m = +1., elliptic = true, ϵ = 1e-9, max_i
 
     println("l: $l, m: $m")
 
-    # f = (x) -> 1 - x + m / x^2 * W(m / x^2 - l)
-
-    function y_gen(y)
+    function y_fn(y)
         x_1 = m / y^2 - l
         g = 2 * asin(sqrt(x_1))
         x_2 = (2g - sin(2g)) / sin(g)^3
 
-        return 1 + x_2 * (l + x_1)
+        return y - 1. - x_2 * (l + x_1)
     end
 
-    function fn(y)
-        return y - y_gen(y)
-    end
-
-    begin
-        yn = 1.
-        fi = 1.
-        for i in 1:100
-            fio = fi
-            fi = fn(yn)
-            Δfi = fi - fio
-
-            dfi = ForwardDiff.derivative(fn, yn)
-            Δyn = - fi / dfi
-            yn = yn + Δyn
-
-            if abs(Δyn) < 1e-15
-                println("Iterations: $i y: $yn Δy: $Δyn Δf: $Δfi")
-                break
-            end
-        end
-    end
-
-    local x_1, x_2
-    y = 1.
-    for iter in 1:max_iter
-
-        x_1 = m / y^2 - l
-        # x_2 = 4/3 * (1 + 6/5 * x_1 + 48/35 * x_1^2 + 32/21 * x_1^3 + 128/77 * x_1^4 + 256/143 * x_1^5 + 4096/2145 * x_1^6)
-
-        # g = 2 * asin(sqrt(x_1))
-        # x_2 = (2g - sin(2g)) / sin(g)^3
-
-        x_2 = lambert_gauss_W(x_1)
-
-        y_new = 1 + x_2 * (l + x_1)
-
-        dy = y - y_new
-        y = y_new
-
-        if abs(dy) < ϵ
-            break
-        end
-
-        if iter === max_iter
-            error("Did not converge after $iter iterations")
-        end
-    end
+    y = newton_raphson_method(y_fn, 1.)
 
     if elliptic
         cos_ΔE_2 = 1 - 2x_1
